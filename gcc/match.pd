@@ -9536,27 +9536,24 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
     (ncmp (convert:stype @0) { build_zero_cst (stype); })))))
 
 /* If we have A < 0 ? C : 0 where C is a power of 2, convert
-   this into a right shift or sign extension followed by ANDing with C.
-   For C == 1, keep the comparison to avoid a signed shift followed by
-   truncation and masking.  */
+   this into a right shift or sign extension followed by ANDing with C.  */
 (simplify
  (cond
-  (lt@2 @0 integer_zerop)
+  (lt @0 integer_zerop)
   INTEGER_CST@1 integer_zerop)
  (if (integer_pow2p (@1)
+      && !integer_onep (@1)
       && !TYPE_UNSIGNED (TREE_TYPE (@0)))
-  (if (integer_onep (@1))
-   (convert @2)
-   (with {
-     int shift = element_precision (@0) - wi::exact_log2 (wi::to_wide (@1)) - 1;
-    }
-    (if (shift >= 0)
-     (bit_and
-      (convert (rshift @0 { build_int_cst (integer_type_node, shift); }))
-      @1)
-     /* Otherwise ctype must be wider than TREE_TYPE (@0) and pure
-	sign extension followed by AND with C will achieve the effect.  */
-     (bit_and (convert @0) @1))))))
+  (with {
+    int shift = element_precision (@0) - wi::exact_log2 (wi::to_wide (@1)) - 1;
+   }
+   (if (shift >= 0)
+    (bit_and
+     (convert (rshift @0 { build_int_cst (integer_type_node, shift); }))
+     @1)
+    /* Otherwise ctype must be wider than TREE_TYPE (@0) and pure
+       sign extension followed by AND with C will achieve the effect.  */
+    (bit_and (convert @0) @1)))))
 
 /* (A | (convert?)(A != 0)) EQ|NE 0 -> A EQ|NE 0 (PR114969)
 
