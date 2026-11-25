@@ -9542,6 +9542,7 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
   (lt @0 integer_zerop)
   INTEGER_CST@1 integer_zerop)
  (if (integer_pow2p (@1)
+      && !integer_onep (@1)
       && !TYPE_UNSIGNED (TREE_TYPE (@0)))
   (with {
     int shift = element_precision (@0) - wi::exact_log2 (wi::to_wide (@1)) - 1;
