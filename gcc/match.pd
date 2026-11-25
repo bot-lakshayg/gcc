@@ -2797,6 +2797,37 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
       && single_use (@0))
   (rdiv (negate @1) @2)))
 
+#if GIMPLE
+/* Use a logical shift if narrowing discards every sign-fill bit.  */
+(simplify
+ (convert (rshift:s @0 INTEGER_CST@1))
+ (if (INTEGRAL_TYPE_P (type)
+      && TYPE_UNSIGNED (type)
+      && INTEGRAL_TYPE_P (TREE_TYPE (@0))
+      && !TYPE_UNSIGNED (TREE_TYPE (@0))
+      && TYPE_PRECISION (type) < TYPE_PRECISION (TREE_TYPE (@0))
+      && wi::leu_p (wi::to_wide (@1),
+                     TYPE_PRECISION (TREE_TYPE (@0)) - TYPE_PRECISION (type)))
+  (with { tree utype = unsigned_type_for (TREE_TYPE (@0)); }
+   (convert (rshift (convert:utype @0) @1)))))
+
+/* Likewise if an explicit mask discards every sign-fill bit, including
+   when a narrowing conversion lies between the shift and the mask.  */
+(simplify
+ (bit_and (convert?:s (rshift:s @0 INTEGER_CST@1)) INTEGER_CST@2)
+ (if (INTEGRAL_TYPE_P (type)
+      && INTEGRAL_TYPE_P (TREE_TYPE (@0))
+      && !TYPE_UNSIGNED (TREE_TYPE (@0)))
+  (with {
+    unsigned int prec = TYPE_PRECISION (TREE_TYPE (@0));
+    unsigned int bits = wi::min_precision (wi::to_wide (@2), UNSIGNED);
+   }
+   (if (bits <= prec && wi::leu_p (wi::to_wide (@1), prec - bits))
+    (with { tree utype = unsigned_type_for (TREE_TYPE (@0)); }
+     (bit_and (convert (rshift (convert:utype @0) @1)) @2))))))
+
+#endif
+
 /* Fold -((int)x >> (prec - 1)) into (unsigned)x >> (prec - 1).  */
 (simplify
  (negate (convert? (rshift @0 INTEGER_CST@1)))
