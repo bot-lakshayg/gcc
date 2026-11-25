@@ -1167,6 +1167,24 @@ simplify_context::simplify_unary_operation_1 (rtx_code code, machine_mode mode,
 	return simplify_gen_binary (LSHIFTRT, mode,
 				    XEXP (op, 0), XEXP (op, 1));
 
+      /* The same identity holds after a narrowing lowpart SUBREG:
+	 negation commutes with truncation modulo the result precision.  */
+      if (SUBREG_P (op)
+	  && subreg_lowpart_p (op)
+	  && is_a <scalar_int_mode> (mode, &int_mode)
+	  && is_a <scalar_int_mode> (GET_MODE (SUBREG_REG (op)), &inner)
+	  && GET_MODE_PRECISION (int_mode) < GET_MODE_PRECISION (inner)
+	  && GET_CODE (SUBREG_REG (op)) == ASHIFTRT
+	  && CONST_INT_P (XEXP (SUBREG_REG (op), 1))
+	  && INTVAL (XEXP (SUBREG_REG (op), 1))
+	     == GET_MODE_PRECISION (inner) - 1)
+	{
+	  rtx shift = SUBREG_REG (op);
+	  temp = simplify_gen_binary (LSHIFTRT, inner, XEXP (shift, 0),
+				      XEXP (shift, 1));
+	  return simplify_gen_subreg (mode, temp, inner, SUBREG_BYTE (op));
+	}
+
       /* (neg (lshiftrt X C)) can be replaced by (ashiftrt X C) when
 	 C is equal to the width of MODE minus 1.  */
       if (GET_CODE (op) == LSHIFTRT
@@ -9993,6 +10011,54 @@ test_logical_comparisons ()
   flag_finite_math_only = saved_finite_math_only;
 }
 
+/* Test negation of a sign shift through narrowing lowpart subregs.  */
+
+static void
+test_neg_subreg_sign_shift ()
+{
+  const scalar_int_mode modes[] = { QImode, HImode, SImode, DImode, TImode };
+  for (auto outer : modes)
+    for (auto inner : modes)
+      if (GET_MODE_PRECISION (outer) < GET_MODE_PRECISION (inner))
+	{
+	  rtx reg = make_test_reg (inner);
+	  unsigned int precision = GET_MODE_PRECISION (inner);
+	  rtx count = gen_int_shift_amount (inner, precision - 1);
+	  rtx shift = gen_rtx_ASHIFTRT (inner, reg, count);
+	  poly_uint64 offset = subreg_lowpart_offset (outer, inner);
+	  rtx low = gen_rtx_SUBREG (outer, shift, offset);
+	  rtx logical = gen_rtx_LSHIFTRT (inner, reg, count);
+	  rtx expected = simplify_gen_subreg (outer, logical, inner, offset);
+	  ASSERT_TRUE (expected != NULL_RTX);
+	  ASSERT_RTX_EQ (expected,
+			 simplify_unary_operation (NEG, outer, low, outer));
+
+	  /* A smaller shift does not produce only zero and all ones.  */
+	  count = gen_int_shift_amount (inner, precision - 2);
+	  shift = gen_rtx_ASHIFTRT (inner, reg, count);
+	  low = gen_rtx_SUBREG (outer, shift, offset);
+	  logical = gen_rtx_LSHIFTRT (inner, reg, count);
+	  rtx wrong = simplify_gen_subreg (outer, logical, inner, offset);
+	  ASSERT_FALSE (rtx_equal_p (wrong,
+				   simplify_gen_unary (NEG, outer, low, outer)));
+
+	  /* Reusing a highpart offset on the logical sign shift would
+	     incorrectly make the result zero.  */
+	  count = gen_int_shift_amount (inner, precision - 1);
+	  shift = gen_rtx_ASHIFTRT (inner, reg, count);
+	  offset = subreg_highpart_offset (outer, inner);
+	  if (validate_subreg (outer, inner, shift, offset))
+	    {
+	      rtx high = gen_rtx_SUBREG (outer, shift, offset);
+	      logical = gen_rtx_LSHIFTRT (inner, reg, count);
+	      wrong = simplify_gen_subreg (outer, logical, inner, offset);
+	      ASSERT_FALSE (rtx_equal_p
+			    (wrong,
+			     simplify_gen_unary (NEG, outer, high, outer)));
+	    }
+	}
+}
+
 /* Verify some simplifications involving scalar expressions.  */
 
 static void
@@ -10019,6 +10085,7 @@ test_scalar_ops ()
 
   test_comparisons (QImode, HImode, SImode);
   test_logical_comparisons ();
+  test_neg_subreg_sign_shift ();
 }
 
 /* Test vector simplifications involving VEC_DUPLICATE in which the
